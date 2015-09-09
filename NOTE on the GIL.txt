@@ -1,0 +1,52 @@
+# Sourced from http://jessenoller.com/blog/2009/02/01/python-threads-and-the-global-interpreter-lock
+
+A note on the GIL
+Python uses a global interpreter lock to protect the interpreter internals from simultaneous access
+In the CPython interpreter, the GIL is released every hundred byte code instructions, and another thread can run.
+A long byte code instruction, such as complex math operations, will not release the GIL until complete.
+Sleeping a tiny amount: time.sleep(0.0001), is a GIL Workaround: the GIL will be magically released, and your other thread(s) will run.
+
+Another note
+Performing IO operations releases the GIL
+
+There is an exception though: C modules! C extension modules (and built in C modules) can be built in such a way that they release the GIL voluntarily and do their own magic.
+Take for instance the time module (''timemodule.c'' in the Python source tree). The ''sleep()'' function looks something like this:
+...
+    Py_BEGIN_ALLOW_THREADS
+        sleep((int)secs);
+    Py_END_ALLOW_THREADS
+....
+
+In a C extension, the ''Py_BEGIN_ALLOW_THREADS'' and ''Py_END_ALLOW_THREADS'' macros signal the interpreter and basically state
+"hey, I'm entering some blocking operation, here's the GIL back" and "hey, I'm returning, I need the GIL".
+This means that anything in your application that uses a blocking I/O function (network/socket manipulation, file manipulation)
+or a thread-safe C extension (most of the built-in ones are) can "bypass" the GIL.
+This means you can get closer to having multiple threads running at concurrently.
+
+Take for a moment, the ''timemodule.c'' code we pasted above.
+This means that if you have a threaded application, and want the GIL to be released regularly by your threads,
+you can call ''time.sleep(.0001)'' or some other tiny amount, and the GIL will be magically released, and your other thread(s) will run.
+Most application developers wouldn't like this solution, but it is a common "work around" for the GIL limitation.
+
+There are other macros and a lot more details about the C API and the GIL.
+The newer macros ''PyGILState_STATE_Ensure'' and ''PyGILState_STATE_Release'' do all of the low level state and GIL manipulation for you.
+
+RECOMMENDED:
+We recommend reading section 8.1 of the Python/C API Reference Manual.
+http://docs.python.org/api/threads.html
+
+NB!!!
+From a programming standpoint, the GIL is equivalent to wrapping all of your code in a ''synchronize'' keyword (without the memory safety).
+No two threads can run at once, they can only seem to via GIL acquisition/releasing tricks.
+
+There are other ways to accelerate the GIL manipulation or avoid it:
+- call ''time.sleep()'' - set ''sys.setcheckinterval()''
+- run Python in optimized mode
+- dump process-intensive tasks into C-extensions
+- use the subprocess module to execute commands
+
+The fact is, the GIL does prevent you as a programmer from using multiple CPUs simultaneously.
+Python as a language, however, does not.
+If the CPython interpreter had the GIL removed, the operating system's pthread system would be free to run everything in parallel.
+The GIL does not prevent a process from running on a different processor of a machine.
+It simply only allows one thread to run at once within the interpreter.
